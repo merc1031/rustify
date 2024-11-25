@@ -80,6 +80,7 @@ impl<E: Endpoint, M: MiddleWare> Endpoint for MutatedEndpoint<'_, E, M> {
             &self.path(),
             self.method(),
             self.query()?,
+            self.headers()?,
             self.body()?,
         )?;
 
@@ -204,6 +205,11 @@ pub trait Endpoint: Send + Sync + Sized {
         Ok(None)
     }
 
+    /// Optional data to add to the headers of the request.
+    fn headers(&self) -> Result<Option<http::HeaderMap>, ClientError> {
+        Ok(None)
+    }
+
     /// Returns the full URL address of the endpoint using the base address.
     #[instrument(skip(self), err)]
     fn url(&self, base: &str) -> Result<http::Uri, ClientError> {
@@ -219,6 +225,7 @@ pub trait Endpoint: Send + Sync + Sized {
             &self.path(),
             self.method(),
             self.query()?,
+            self.headers()?,
             self.body()?,
         )
     }

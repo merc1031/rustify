@@ -39,6 +39,7 @@ pub fn build_request(
     path: &str,
     method: RequestMethod,
     query: Option<String>,
+    headers: Option<http::HeaderMap>,
     data: Option<Vec<u8>>,
 ) -> Result<Request<Vec<u8>>, ClientError> {
     debug!("Building endpoint request");
@@ -46,9 +47,19 @@ pub fn build_request(
 
     let method_err = method.clone();
     let uri_err = uri.to_string();
-    Request::builder()
-        .uri(uri)
-        .method(method)
+    let mut builder = Request::builder().uri(uri).method(method);
+
+    let builder = match headers {
+        Some(h) => {
+            builder.headers_mut().map(|headers| {
+                headers.extend(h);
+                headers
+            });
+            builder
+        }
+        None => builder,
+    };
+    builder
         .body(data.unwrap_or_default())
         .map_err(|e| ClientError::RequestBuildError {
             source: e,

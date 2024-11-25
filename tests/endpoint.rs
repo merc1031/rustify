@@ -1,6 +1,6 @@
 mod common;
 
-use std::fmt::Debug;
+use std::{convert::TryFrom, fmt::Debug};
 
 use common::{Middle, TestGenericWrapper, TestResponse, TestServer};
 use derive_builder::Builder;
@@ -11,6 +11,31 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use std::marker::PhantomData;
 use test_log::test;
+
+#[test(tokio::test)]
+async fn test_header() {
+    #[derive(Endpoint)]
+    #[endpoint(path = "test/path")]
+    struct Test {
+        #[endpoint(header(name = "X-API-Token"))]
+        pub token: String,
+    }
+
+    let t = TestServer::default();
+    let e = Test {
+        token: "asd".to_string(),
+    };
+    let m = t.server.mock(|when, then| {
+        when.method(GET)
+            .path("/test/path")
+            .header("x-api-token", "asd");
+        then.status(200);
+    });
+    let r = e.exec(&t.client).await;
+
+    m.assert();
+    assert!(r.is_ok());
+}
 
 #[test(tokio::test)]
 async fn test_path() {

@@ -12,14 +12,16 @@ mod error;
 mod params;
 mod parse;
 
-use std::{collections::HashMap, convert::TryFrom};
+use std::{collections::HashMap, convert::TryFrom, hash::Hash};
 
 use error::Error;
 use params::Parameters;
 use proc_macro2::Span;
 use quote::quote;
 use regex::Regex;
-use syn::{self, spanned::Spanned, Field, Generics, Ident, Meta};
+use syn::{
+    self, spanned::Spanned, Field, Generics, Ident, Lit, LitStr, Meta, MetaNameValue, NestedMeta,
+};
 
 const MACRO_NAME: &str = "Endpoint";
 const ATTR_NAME: &str = "endpoint";
@@ -31,17 +33,42 @@ pub(crate) enum EndpointAttribute {
     Raw,
     Skip,
     Untagged,
+    Header(syn::Lit),
 }
 
 impl TryFrom<&Meta> for EndpointAttribute {
     type Error = Error;
     fn try_from(m: &Meta) -> Result<Self, Self::Error> {
-        match m.path().get_ident() {
+        let path = m.path();
+        match path.get_ident() {
             Some(i) => match i.to_string().to_lowercase().as_str() {
                 "body" => Ok(EndpointAttribute::Body),
                 "query" => Ok(EndpointAttribute::Query),
                 "raw" => Ok(EndpointAttribute::Raw),
                 "skip" => Ok(EndpointAttribute::Skip),
+                "header" => match m {
+                    &Meta::List(ref ml) => ml
+                        .nested
+                        .iter()
+                        .find_map(|n| match n {
+                            NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                                path, lit, ..
+                            })) if path.is_ident("name") => Some(lit),
+                            _ => None,
+                        })
+                        .map(|lit| Ok(EndpointAttribute::Header(lit.clone())))
+                        .unwrap_or_else(|| {
+                            Err(Error::new(
+                                m.span(),
+                                format!("Header attribute must be a key-value pair {:?}", ml)
+                                    .as_str(),
+                            ))
+                        }),
+                    _ => Err(Error::new(
+                        m.span(),
+                        format!("Header attribute must be a key-value pair {:?}", m).as_str(),
+                    )),
+                },
                 _ => Err(Error::new(
                     m.span(),
                     format!("Unknown attribute: {}", i).as_str(),
@@ -125,6 +152,50 @@ fn gen_query(
         }
     } else {
         quote! {}
+    }
+}
+
+/// Generates the headers method for generating headers.
+///
+/// If any fields are found with the [EndpointAttribute::Header] attribute they
+/// are combined into a new struct and then serialized into a HashMap. If
+/// the attribute is not found on any of the fields the query method is not
+/// generated.
+fn gen_headers(fields: &HashMap<EndpointAttribute, Vec<Field>>) -> proc_macro2::TokenStream {
+    let header_fields = fields
+        .iter()
+        .filter_map(|(k, v)| match (k, v.as_slice()) {
+            (
+                EndpointAttribute::Header(Lit::Str(n)),
+                [Field {
+                    ident: Some(ident), ..
+                }],
+            ) => Some((n.value(), ident.to_string())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if header_fields.is_empty() {
+        return quote! {};
+    }
+
+    let header_inserts = header_fields.iter().map(|(key, value)| {
+        let key_ident = syn::LitStr::new(key, proc_macro2::Span::call_site());
+        let value_ident = syn::Ident::new(value, proc_macro2::Span::call_site());
+        quote! {
+            headers.insert(
+                http::HeaderName::try_from(#key_ident)?,
+                http::HeaderValue::from_str(self.#value_ident.to_string().as_ref())?,
+            );
+        }
+    });
+
+    quote! {
+        fn headers(&self) -> Result<Option<http::HeaderMap>, ClientError> {
+            let mut headers = http::HeaderMap::new();
+            #(#header_inserts)*
+            Ok(Some(headers))
+        }
     }
 }
 
@@ -286,6 +357,8 @@ fn endpoint_derive(s: synstructure::Structure) -> proc_macro2::TokenStream {
     // Generate query function
     let query = gen_query(&field_attrs, &serde_attrs);
 
+    let headers = gen_headers(&field_attrs);
+
     // Generate body function
     let body = match gen_body(&field_attrs, &serde_attrs) {
         Ok(d) => d,
@@ -327,6 +400,9 @@ fn endpoint_derive(s: synstructure::Structure) -> proc_macro2::TokenStream {
                 }
 
                 #query
+
+
+                #headers
 
 
                 #body
