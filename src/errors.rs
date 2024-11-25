@@ -46,4 +46,14 @@ pub enum ClientError {
     UrlQueryParseError { source: anyhow::Error },
     #[error("Error parsing URL")]
     UrlParseError { source: url::ParseError },
+    #[error("Error building HeaderName")]
+    HeaderNameBuildError {
+        #[from]
+        source: http::header::InvalidHeaderName,
+    },
+    #[error("Error building HeaderValue")]
+    HeaderValueBuildError {
+        #[from]
+        source: http::header::InvalidHeaderValue,
+    },
 }
