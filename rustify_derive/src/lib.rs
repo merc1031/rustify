@@ -19,9 +19,7 @@ use params::Parameters;
 use proc_macro2::Span;
 use quote::quote;
 use regex::Regex;
-use syn::{
-    self, spanned::Spanned, Field, Generics, Ident, Lit, LitStr, Meta, MetaNameValue, NestedMeta,
-};
+use syn::{self, spanned::Spanned, Field, Generics, Ident, Lit, Meta, MetaNameValue, NestedMeta};
 
 const MACRO_NAME: &str = "Endpoint";
 const ATTR_NAME: &str = "endpoint";
@@ -34,6 +32,7 @@ pub(crate) enum EndpointAttribute {
     Skip,
     Untagged,
     Header(syn::Lit),
+    BasicAuth(Option<String>),
 }
 
 impl TryFrom<&Meta> for EndpointAttribute {
@@ -68,6 +67,26 @@ impl TryFrom<&Meta> for EndpointAttribute {
                         m.span(),
                         format!("Header attribute must be a key-value pair {:?}", m).as_str(),
                     )),
+                },
+                "basic_auth" => {
+                    match m {
+                        &Meta::Path(_) => Ok(EndpointAttribute::BasicAuth(None)),
+                        &Meta::List(ref ml) => {
+                            match ml.nested.iter().collect::<Vec<_>>().as_slice() {
+                                [NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit: Lit::Str(lit), ..}))] if path.is_ident("name") => {
+                                    Ok(EndpointAttribute::BasicAuth(Some(lit.value())))
+                                },
+                                _ => return Err(Error::new(
+                                    m.span(),
+                                    format!("Auth attribute must be \"name\" {:?}", ml).as_str(),
+                                )),
+                            }
+                        },
+                        _ => Err(Error::new(
+                            m.span(),
+                            format!("Auth attribute must be \"basic_auth\" or \"basic_auth(name = \"auth-header-name\")\" {:?}", m).as_str(),
+                        )),
+                    }
                 },
                 _ => Err(Error::new(
                     m.span(),
@@ -195,6 +214,57 @@ fn gen_headers(fields: &HashMap<EndpointAttribute, Vec<Field>>) -> proc_macro2::
             let mut headers = http::HeaderMap::new();
             #(#header_inserts)*
             Ok(Some(headers))
+        }
+    }
+}
+
+/// Generates the basic_auth method for generating basic_auth header.
+///
+/// If any fields are found with the [EndpointAttribute::Auth] attribute they
+/// are combined into a new struct and then serialized into a HashMap. If
+/// the attribute is not found on any of the fields the query method is not
+/// generated.
+fn gen_basic_auth(fields: &HashMap<EndpointAttribute, Vec<Field>>) -> proc_macro2::TokenStream {
+    let auth_fields = fields
+        .iter()
+        .filter_map(|(k, v)| match (k, v.as_slice()) {
+            (
+                EndpointAttribute::BasicAuth(auth),
+                [Field {
+                    ident: Some(ident), ..
+                }],
+            ) => Some((auth, ident.to_string())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if auth_fields.len() > 1 {
+        return Error::new(
+            Span::call_site(),
+            format!("May only mark one field as basic_auth {:?}", auth_fields).as_str(),
+        )
+        .into_tokens();
+    }
+
+    if auth_fields.is_empty() {
+        return quote! {};
+    }
+
+    let auth_field = auth_fields[0].clone();
+
+    let key_ident = syn::LitStr::new(
+        auth_field.0.as_ref().map_or("Authorization", |v| v),
+        proc_macro2::Span::call_site(),
+    );
+    let value_ident = syn::Ident::new(auth_field.1.as_ref(), proc_macro2::Span::call_site());
+    quote! {
+        fn auth(&self) -> Result<Option<(http::HeaderName, http::HeaderValue)>, ClientError> {
+            let (username, password) = self.#value_ident.clone();
+
+            Ok(Some((
+                http::HeaderName::try_from(#key_ident)?,
+                http::HeaderValue::from_str(&http_auth::basic::encode_credentials(username.to_string().as_ref(), password.to_string().as_ref()))?,
+            )))
         }
     }
 }
@@ -359,6 +429,8 @@ fn endpoint_derive(s: synstructure::Structure) -> proc_macro2::TokenStream {
 
     let headers = gen_headers(&field_attrs);
 
+    let basic_auth = gen_basic_auth(&field_attrs);
+
     // Generate body function
     let body = match gen_body(&field_attrs, &serde_attrs) {
         Ok(d) => d,
@@ -403,6 +475,9 @@ fn endpoint_derive(s: synstructure::Structure) -> proc_macro2::TokenStream {
 
 
                 #headers
+
+
+                #basic_auth
 
 
                 #body

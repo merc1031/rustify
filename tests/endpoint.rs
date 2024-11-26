@@ -38,6 +38,58 @@ async fn test_header() {
 }
 
 #[test(tokio::test)]
+#[cfg(feature = "auth")]
+async fn test_auth() {
+    #[derive(Endpoint)]
+    #[endpoint(path = "test/path")]
+    struct Test {
+        #[endpoint(basic_auth)]
+        pub auth: (String, String),
+    }
+
+    let t = TestServer::default();
+    let e = Test {
+        auth: ("asd".to_string(), "zzz".to_string()),
+    };
+    let m = t.server.mock(|when, then| {
+        when.method(GET)
+            .path("/test/path")
+            .header("authorization", "Basic YXNkOnp6eg==");
+        then.status(200);
+    });
+    let r = e.exec(&t.client).await;
+
+    m.assert();
+    assert!(r.is_ok());
+}
+
+#[test(tokio::test)]
+#[cfg(feature = "auth")]
+async fn test_auth_diff_header() {
+    #[derive(Endpoint)]
+    #[endpoint(path = "test/path")]
+    struct Test {
+        #[endpoint(basic_auth(name = "MyAuth"))]
+        pub auth: (String, String),
+    }
+
+    let t = TestServer::default();
+    let e = Test {
+        auth: ("asd".to_string(), "zzz".to_string()),
+    };
+    let m = t.server.mock(|when, then| {
+        when.method(GET)
+            .path("/test/path")
+            .header("myauth", "Basic YXNkOnp6eg==");
+        then.status(200);
+    });
+    let r = e.exec(&t.client).await;
+
+    m.assert();
+    assert!(r.is_ok());
+}
+
+#[test(tokio::test)]
 async fn test_path() {
     #[derive(Endpoint)]
     #[endpoint(path = "test/path")]

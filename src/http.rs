@@ -40,6 +40,7 @@ pub fn build_request(
     method: RequestMethod,
     query: Option<String>,
     headers: Option<http::HeaderMap>,
+    auth: Option<(http::HeaderName, http::HeaderValue)>,
     data: Option<Vec<u8>>,
 ) -> Result<Request<Vec<u8>>, ClientError> {
     debug!("Building endpoint request");
@@ -59,6 +60,12 @@ pub fn build_request(
         }
         None => builder,
     };
+
+    let builder = match auth {
+        Some(h) => builder.header(h.0, h.1),
+        None => builder,
+    };
+
     builder
         .body(data.unwrap_or_default())
         .map_err(|e| ClientError::RequestBuildError {

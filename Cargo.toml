@@ -16,6 +16,7 @@ edition = "2018"
 default = ["reqwest/default-tls"]
 blocking = ["reqwest/blocking"]
 rustls-tls = ["reqwest/rustls-tls"]
+auth = ["http-auth"]
 
 [workspace]
 members = [
@@ -27,6 +28,7 @@ anyhow = "1.0.56"
 async-trait = "0.1.52"
 bytes = "1.1.0"
 http = "1"
+http-auth = {version = "0.1", features = ["http10"], optional = true}
 reqwest = { version = "0.12.2", default-features = false, optional = true }
 rustify_derive = { version = "0.5.3", path = "rustify_derive" }
 serde = { version = "1.0.136", features = ["derive"] }
