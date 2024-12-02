@@ -447,10 +447,8 @@ fn endpoint_derive(s: synstructure::Structure) -> proc_macro2::TokenStream {
     let (impl_generics, ty_generics, where_clause) = s.ast().generics.split_for_impl();
 
     // Generate Endpoint implementation
-    let const_name = format!("_DERIVE_Endpoint_FOR_{}", id);
-    let const_ident = Ident::new(const_name.as_str(), Span::call_site());
     quote! {
-        const #const_ident: () = {
+        const _: () = {
             use rustify::__private::serde::Serialize;
             use rustify::http::{build_body, build_query};
             use rustify::client::Client;
